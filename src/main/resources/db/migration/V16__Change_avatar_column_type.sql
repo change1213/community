@@ -1,0 +1,1 @@
+alter table user alter column  avatar_url varchar(256) default null;

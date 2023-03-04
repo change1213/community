@@ -3,7 +3,7 @@ package com.dubble.community.dto;
 import lombok.Data;
 
 /**
- * Created by codedrinker on 2019/4/24.
+ * Created by codedrinker on 2023/4/24.
  */
 @Data
 public class GiteeUser {

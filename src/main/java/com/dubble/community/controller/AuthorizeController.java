@@ -1,68 +1,86 @@
 package com.dubble.community.controller;
 
-import com.dubble.community.dto.AccessTokenDTO;
-import com.dubble.community.dto.GiteeUser;
-import com.dubble.community.dto.GithubUser;
-import com.dubble.community.mapper.UserMapper;
 import com.dubble.community.model.User;
-import com.dubble.community.provider.GiteeProvider;
 import com.dubble.community.provider.GithubProvider;
+import com.dubble.community.service.UserService;
+import com.dubble.community.strategy.LoginUserInfo;
+import com.dubble.community.strategy.UserStrategy;
+import com.dubble.community.strategy.UserStrategyFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
-import java.io.IOException;
+import javax.servlet.http.HttpServletResponse;
 import java.util.UUID;
 
 /**
- * @Author dubble
- * @Date 2023/2/27 22:25
- * @Version 1.0
+ * Created by codedrinker on 2019/4/24.
  */
 @Controller
+@Slf4j
 public class AuthorizeController {
+
     @Autowired
-    private GiteeProvider giteeProvider;
+    private UserStrategyFactory userStrategyFactory;
+
     @Autowired
-    private UserMapper userMapper;
+    private GithubProvider githubProvider;
 
     @Value("${github.client.id}")
     private String clientId;
+
     @Value("${github.client.secret}")
     private String clientSecret;
+
     @Value("${github.redirect.uri}")
     private String redirectUri;
 
-    @GetMapping("/callback")
-    public String callback(@RequestParam(name = "code") String code,
-                           @RequestParam(name = "state") String state,
-                           HttpServletRequest request) {
-        AccessTokenDTO accessTokenDTO = new AccessTokenDTO();
-        accessTokenDTO.setClient_id(clientId);
-        accessTokenDTO.setClient_secret(clientSecret);
-        accessTokenDTO.setCode(code);
-        accessTokenDTO.setRedirect_uri(redirectUri);
-        accessTokenDTO.setState(state);
-        String accessToken =giteeProvider.getAccessToken(accessTokenDTO);
-        GiteeUser giteeUser = giteeProvider.getUser(accessToken);
-        System.out.println(giteeUser.getName());
-        if(giteeUser != null){
-            //登陆成功,写cookie和session
+    @Autowired
+    private UserService userService;
+
+    @GetMapping("/callback/{type}")
+    public String newCallback(@PathVariable(name = "type") String type,
+                              @RequestParam(name = "code") String code,
+                              @RequestParam(name = "state", required = false) String state,
+                              HttpServletRequest request,
+                              HttpServletResponse response) {
+        UserStrategy userStrategy = userStrategyFactory.getStrategy(type);
+        LoginUserInfo loginUserInfo = userStrategy.getUser(code, state);
+        if (loginUserInfo != null && loginUserInfo.getId() != null) {
             User user = new User();
-            user.setToken(UUID.randomUUID().toString());
-            user.setName(giteeUser.getName());
-            user.setAccountId(String.valueOf(giteeUser.getId()));
-            user.setGmtCreate(System.currentTimeMillis());
-            user.setGmtModified(user.getGmtCreate());
-            userMapper.insert(user);
-            request.getSession().setAttribute("user",giteeUser);
+            String token = UUID.randomUUID().toString();
+            user.setToken(token);
+            user.setName(loginUserInfo.getName());
+            user.setAccountId(String.valueOf(loginUserInfo.getId()));
+            user.setType(type);
+            user.setAvatarUrl(loginUserInfo.getAvatarUrl());
+            userService.createOrUpdate(user);
+            Cookie cookie = new Cookie("token", token);
+            cookie.setMaxAge(60 * 60 * 24 * 30 * 6);
+            cookie.setPath("/");
+            response.addCookie(cookie);
             return "redirect:/";
-        }else {
-            //登陆失败，重新登陆
+        } else {
+            log.error("callback get github error,{}", loginUserInfo);
+            // 登录失败，重新登录
             return "redirect:/";
         }
+    }
+
+    @GetMapping("/logout")
+    public String logout(HttpServletRequest request,
+                         HttpServletResponse response) {
+        request.getSession().invalidate();
+        Cookie cookie = new Cookie("token", null);
+        cookie.setMaxAge(0);
+        cookie.setPath("/");
+        response.addCookie(cookie);
+        return "redirect:/";
     }
 }
